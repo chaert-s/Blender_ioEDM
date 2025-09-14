@@ -66,6 +66,10 @@ class BaseReader(object):
     """Read an unsigned integer from the data"""
     return struct.unpack("<{}I".format(count), self.stream.read(4*count))
 
+  def read_uint_be(self):
+    """Read a big-endian unsigned integer from the data"""
+    return struct.unpack(">I", self.stream.read(4))[0]
+
   def read_int(self):
     """Read a signed integer from the data"""
     return struct.unpack("<i", self.stream.read(4))[0]
@@ -112,7 +116,10 @@ class BaseReader(object):
 
   def read_list(self, reader):
     """Reads a length-prefixed list of something"""
-    length = self.read_uint()
+    if self.v10:
+      length = self.read_uint_be()
+    else:
+      length = self.read_uint()
     entries = []
     for index in range(length):
       entries.append(reader(self))

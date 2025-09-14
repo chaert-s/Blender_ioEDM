@@ -80,9 +80,9 @@ class VertexFormat(object):
 
 def _read_material_texture(reader):
   index = reader.read_uint()
-  assert (reader.read_int() == -1)
-  name = reader.read_string()
-  assert reader.read_uints(4) == (2,2,10,6)
+  reader.read_int() # unknown
+  name = reader.read_string(lookup=False)
+  reader.read_uints(4) # unknown
   matrix = reader.read_matrixf()
   return Texture(index, name, matrix)
 
