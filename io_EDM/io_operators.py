@@ -37,26 +37,18 @@ class ImportEDM(Operator, ImportHelper):
       default=False)
 
   def execute(self, context):
-    paths = []
-    # If called from the UI with multiple files, self.files will be populated.
-    if self.files:
-        paths = [os.path.join(self.directory, name.name) for name in self.files]
-    # If called from a script or with a single file from UI, self.filepath will be set.
-    elif self.filepath:
-        paths.append(self.filepath)
-
-    if not paths:
+    path = self.filepath
+    if not path:
         self.report({'ERROR'}, "No input file selected.")
         return {'CANCELLED'}
 
-    if len(paths) > 1:
-      self.report({'ERROR'}, "Importer cannot handle more than one input file currently")
-      return {'CANCELLED'}
+    # The importer only supports one file at a time.
+    # We will only process the one in self.filepath, which avoids issues with the `files` collection.
     
     # Import the file
-    logger.warning("Reading EDM file {}".format(paths[0]))
+    logger.warning("Reading EDM file {}".format(path))
     
-    read_file(paths[0], options={"shadeless": self.shadeless})
+    read_file(path, options={"shadeless": self.shadeless})
     return {'FINISHED'}
 
 
