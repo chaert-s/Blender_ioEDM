@@ -121,8 +121,9 @@ class EDMFile(object):
 
     if reader.v10:
       stringsize = reader.read_uint()
-      sdata = reader.read(stringsize).split(bytes(1))
-      reader.strings = [x.decode("windows-1251") for x in sdata]
+      sdata = reader.read(stringsize)
+      # Split by null byte and filter out empty strings
+      reader.strings = [x.decode("windows-1251") for x in sdata.split(b'\x00') if x]
     else:
       reader.strings = None
 
@@ -318,19 +319,28 @@ class RootNode(BaseNode):
   def __init__(self):
     super(RootNode, self).__init__()
     self.name = "Scene Root"
-    self.props["__VERSION__"] = 2
-    self.unknown_parts = []
+    self.props["__VERSION__"] = 3
+    self.unknownC = 0
+    self.maxArgPlusOne = 0
 
   @classmethod
   def read(cls, stream):
     self = super(RootNode, cls).read(stream)
-    self.unknownA = stream.read_uchar()
+
+    if self.props.get("__VERSION__") == 2:
+      self.unknownA = stream.read_uchar()
+
     self.boundingBoxMin = stream.read_vec3d()
     self.boundingBoxMax = stream.read_vec3d()
     self.unknownB = [stream.read_vec3d() for _ in range(4)]
-    self.materials = stream.read_list(Material.read)
+    if stream.v10:
+      material_count = stream.read_uint_be()
+    else:
+      material_count = stream.read_uint()
+    self.materials = [Material.read(stream) for i in range(material_count)]
     stream.materials = self.materials
-    self.unknownD = stream.read_uints(2)
+    self.unknownC = stream.read_uint()
+    self.maxArgPlusOne = stream.read_uint()
     return self
 
   def audit(self):

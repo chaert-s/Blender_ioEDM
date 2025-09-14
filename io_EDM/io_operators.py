@@ -37,14 +37,21 @@ class ImportEDM(Operator, ImportHelper):
       default=False)
 
   def execute(self, context):
-    # Get a list of files
-    paths = [os.path.join(self.directory, name.name) for name in self.files]
+    paths = []
+    # If called from the UI with multiple files, self.files will be populated.
+    if self.files:
+        paths = [os.path.join(self.directory, name.name) for name in self.files]
+    # If called from a script or with a single file from UI, self.filepath will be set.
+    elif self.filepath:
+        paths.append(self.filepath)
+
     if not paths:
-      paths.append(self.filepath)
+        self.report({'ERROR'}, "No input file selected.")
+        return {'CANCELLED'}
 
     if len(paths) > 1:
-      self.report("ERROR", "Importer cannot handle more than one input file currently")
-      return "CANCELLED"
+      self.report({'ERROR'}, "Importer cannot handle more than one input file currently")
+      return {'CANCELLED'}
     
     # Import the file
     logger.warning("Reading EDM file {}".format(paths[0]))
@@ -92,12 +99,12 @@ def register():
   bpy.utils.register_class(ImportEDM)
   bpy.utils.register_class(ExportEDM)
   
-  bpy.types.INFO_MT_file_import.append(menu_import)
-  bpy.types.INFO_MT_file_export.append(menu_export)
+  bpy.types.TOPBAR_MT_file_import.append(menu_import)
+  bpy.types.TOPBAR_MT_file_export.append(menu_export)
 
 def unregister():
-  bpy.types.INFO_MT_file_export.remove(menu_export)
-  bpy.types.INFO_MT_file_import.remove(menu_import)
+  bpy.types.TOPBAR_MT_file_export.remove(menu_export)
+  bpy.types.TOPBAR_MT_file_import.remove(menu_import)
 
   bpy.utils.unregister_class(ImportEDM)
   bpy.utils.unregister_class(ExportEDM)

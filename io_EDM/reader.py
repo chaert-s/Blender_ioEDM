@@ -135,7 +135,7 @@ def process_node(node):
     # Create an empty object to act as the parent of this sub-tree
     ob = bpy.data.objects.new(type(node.transform).__name__, None)
     ob.empty_draw_size = 0.1
-    bpy.context.scene.objects.link(ob)
+    bpy.context.collection.objects.link(ob)
     node.blender = ob
 
   # Connect this object to the parent object (if there is one)
@@ -186,7 +186,7 @@ def read_file(filename, options={}):
   print_edm_graph(edm.transformRoot)
 
   # Set the required blender preferences
-  bpy.context.user_preferences.edit.use_negative_frames = True
+  bpy.context.preferences.edit.use_negative_frames = True
   bpy.context.scene.use_preview_range = True
   bpy.context.scene.frame_preview_start = -100
   bpy.context.scene.frame_preview_end = 100
@@ -411,52 +411,90 @@ def _find_texture_file(name):
   return os.path.abspath(textureFilename)
 
 def create_material(material):
-  """Create a blender material from an EDM one"""
-  # Find the actual file for the texture name
-  if len(material.textures) == 0:
-    return None
+  """Create a blender node-based PBR material from an EDM one"""
+  # Create a new material
+  mat = bpy.data.materials.new(name=material.name)
+  mat.use_nodes = True
+  nodes = mat.node_tree.nodes
+  links = mat.node_tree.links
 
-  diffuse_texture = next(x for x in material.textures if x.index == 0)
+  # Clear existing nodes
+  for node in nodes:
+    nodes.remove(node)
 
-  name = diffuse_texture.name
-  tex = bpy.data.textures.get(name)
-  if not tex:
-    filename = _find_texture_file(name)
-    tex = bpy.data.textures.new(name, type="IMAGE")
-    if filename:
-      tex.image = bpy.data.images.load(filename)
-      tex.image.use_alpha = False
+  # Create Principled BSDF and Output nodes
+  principled_bsdf = nodes.new('ShaderNodeBsdfPrincipled')
+  principled_bsdf.location = (0, 0)
+  material_output = nodes.new('ShaderNodeOutputMaterial')
+  material_output.location = (400, 0)
+  links.new(principled_bsdf.outputs['BSDF'], material_output.inputs['Surface'])
 
-  # Create material
-  mat = bpy.data.materials.new(material.name)
-  mat.specular_shader = "PHONG"
-  # mat.use_shadeless = True
-  mat.edm_material = material.material_name
-  mat.edm_blending = str(material.blending)
-  mat.use_cast_shadows_only = material.shadows.cast_only
-  mat.use_shadows = material.shadows.receive
-  mat.use_cast_shadows = material.shadows.cast
-  # Read uniform values
-  mat.diffuse_intensity = material.uniforms.get("diffuseValue", 1.0)
-  mat.specular_intensity = material.uniforms.get("specFactor", mat.specular_intensity)
-  
-  # Convert power to blender 'hardness'
-  # Actual range is (0-100) but basic step is 0.01 so at least this way every
-  # distinct edm setting (up to 510) gets a distinct hardness
+  # --- Handle Textures ---
+  texture_nodes = {}
+  for tex_def in material.textures:
+    filename = _find_texture_file(tex_def.name)
+    if not filename:
+      continue
+
+    # Create image texture node
+    tex_image = nodes.new('ShaderNodeTexImage')
+    tex_image.image = bpy.data.images.load(filename)
+    tex_image.location = (-400, tex_def.index * -300)
+    texture_nodes[tex_def.index] = tex_image
+
+  # Connect textures to Principled BSDF
+  if 0 in texture_nodes: # Diffuse
+    tex_image = texture_nodes[0]
+    tex_image.image.colorspace_settings.name = 'sRGB'
+    links.new(tex_image.outputs['Color'], principled_bsdf.inputs['Base Color'])
+
+  if 1 in texture_nodes: # Normal
+    tex_image = texture_nodes[1]
+    tex_image.image.colorspace_settings.name = 'Non-Color'
+    normal_map_node = nodes.new('ShaderNodeNormalMap')
+    normal_map_node.location = (-200, -300)
+    links.new(tex_image.outputs['Color'], normal_map_node.inputs['Color'])
+    links.new(normal_map_node.outputs['Normal'], principled_bsdf.inputs['Normal'])
+
+  if 2 in texture_nodes: # Specular
+    tex_image = texture_nodes[2]
+    tex_image.image.colorspace_settings.name = 'Non-Color'
+    links.new(tex_image.outputs['Color'], principled_bsdf.inputs['Specular'])
+
+  # --- Handle Uniforms ---
+  # Metallic
+  if material.material_name == 'chrome_material':
+    principled_bsdf.inputs['Metallic'].default_value = 1.0
+  else:
+    principled_bsdf.inputs['Metallic'].default_value = 0.0
+
+  # Roughness from specPower
   specPower = material.uniforms.get("specPower", None)
   if specPower is not None:
-    mat.specular_hardness = (specPower * 100) + 1
+    # This is a guess, might need tweaking. Assuming specPower is in a range of 0-1024 (common for older shaders)
+    # Higher specPower means a smaller, more intense highlight, which means lower roughness.
+    roughness = (1.0 - (specPower / 1024.0))**0.5 # Using sqrt for a more perceptually linear mapping
+    principled_bsdf.inputs['Roughness'].default_value = max(0.0, min(1.0, roughness))
+  else:
+    principled_bsdf.inputs['Roughness'].default_value = 0.5
 
-  reflection = material.uniforms.get("reflectionValue", 0.0)
-  if reflection > 0.0:
-    mat.raytrace_mirror.use = True
-    mat.raytrace_mirror.reflect_factor = reflection
-    mat.raytrace_mirror.gloss_factor = 1 - material.uniforms.get("reflectionBlurring", 0.0)
+  # Specular from specFactor
+  specFactor = material.uniforms.get("specFactor", None)
+  if specFactor is not None:
+    principled_bsdf.inputs['Specular'].default_value = specFactor
 
-  mtex = mat.texture_slots.add()
-  mtex.texture = tex
-  mtex.texture_coords = "UV"
-  mtex.use_map_color_diffuse = True
+  # --- Handle Blending ---
+  if material.blending == 1: # Blend
+    mat.blend_method = 'BLEND'
+    mat.shadow_method = 'NONE'
+  elif material.blending == 2: # Alpha Test
+    mat.blend_method = 'CLIP'
+  else: # Opaque
+    mat.blend_method = 'OPAQUE'
+
+  # Set other material properties
+  mat.edm_material = material.material_name
+  mat.edm_blending = str(material.blending)
 
   return mat
 
@@ -466,7 +504,7 @@ def create_connector(connector):
   ob = bpy.data.objects.new(connector.name, None)
   ob.empty_draw_type = "CUBE"
   ob.edm.is_connector = True
-  bpy.context.scene.objects.link(ob)
+  bpy.context.collection.objects.link(ob)
   return ob
 
 def apply_node_transform(node, obj):
@@ -562,14 +600,14 @@ def create_object(node):
   ob.edm.is_collision_shell = isinstance(node, ShellNode)
   ob.edm.is_renderable      = isinstance(node, RenderNode)
   ob.edm.damage_argument = -1 if not isinstance(node, RenderNode) else node.damage_argument
-  bpy.context.scene.objects.link(ob)
+  bpy.context.collection.objects.link(ob)
 
   return ob
 
 def create_lamp(node):
   """Creates a blender lamp from an edm renderable LampNode"""
-  data = bpy.data.lamps.new(name=node.name, type='POINT')
-  obj = bpy.data.objects.new(name=node.name, object_data=data)
+  light_data = bpy.data.lights.new(name=node.name, type='POINT')
+  obj = bpy.data.objects.new(name=node.name, object_data=light_data)
   print("Warning: Light nodes created, but not populated from edm data")
-  bpy.context.scene.objects.link(obj)
+  bpy.context.collection.objects.link(obj)
   return obj

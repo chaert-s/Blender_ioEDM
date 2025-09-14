@@ -4,7 +4,7 @@ bl_info = {
   'description': "Importing of .EDM model files",
   'author': "Nicholas Devenish",
   'version': (0,3,0),
-  'blender': (2, 78, 0),
+  'blender': (3, 4, 0),
   'location': "File > Import/Export > .EDM Files",
   'category': 'Import-Export',
 }
